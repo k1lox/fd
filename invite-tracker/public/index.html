@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FomoDoge邀请记录查询</title>
+  <style>
+    body {
+      font-family: 'Arial', sans-serif;
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f7f9fc;
+    }
+    .container {
+      background-color: white;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      padding: 20px;
+    }
+    h1 {
+      color: #333;
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    .search-box {
+      display: flex;
+      margin-bottom: 20px;
+    }
+    .search-box input {
+      flex: 1;
+      padding: 10px;
+      font-size: 16px;
+      border: 1px solid #ddd;
+      border-radius: 4px 0 0 4px;
+    }
+    .search-box button {
+      padding: 10px 20px;
+      background-color: #3f51b5;
+      color: white;
+      font-size: 16px;
+      border: none;
+      border-radius: 0 4px 4px 0;
+      cursor: pointer;
+    }
+    .search-box button:hover {
+      background-color: #303f9f;
+    }
+    .info-card {
+      background-color: #f5f5f5;
+      border-radius: 8px;
+      padding: 15px;
+      margin-bottom: 20px;
+    }
+    .info-card h3 {
+      color: #3f51b5;
+      margin-top: 0;
+      margin-bottom: 15px;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 8px;
+    }
+    .info-card .info-item {
+      margin-bottom: 8px;
+    }
+    .info-card .label {
+      font-weight: bold;
+      display: inline-block;
+      width: 120px;
+    }
+    .record-list {
+      margin-top: 30px;
+    }
+    .record-item {
+      background-color: white;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 15px;
+      margin-bottom: 15px;
+    }
+    .record-item .record-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      font-weight: bold;
+    }
+    .record-item .record-details {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+    .loading {
+      text-align: center;
+      padding: 20px;
+      color: #666;
+    }
+    .error {
+      color: #f44336;
+      padding: 10px;
+      background-color: #ffebee;
+      border-radius: 4px;
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>FomoDoge邀请记录查询</h1>
+    
+    <div class="search-box">
+      <input type="text" id="address-input" placeholder="输入要查询的ETH地址">
+      <button id="search-btn">查询</button>
+    </div>
+    
+    <div id="error-container" class="error" style="display: none;"></div>
+    
+    <div id="loading" class="loading" style="display: none;">
+      <p>正在查询中，请稍候...</p>
+    </div>
+    
+    <div id="results-container" style="display: none;">
+      <div class="info-card">
+        <h3>基本信息</h3>
+        <div class="info-item">
+          <span class="label">邀请总人数:</span>
+          <span id="invite-total">0</span>
+        </div>
+        <div class="info-item">
+          <span class="label">累计佣金:</span>
+          <span id="commission">0 ETH</span>
+        </div>
+      </div>
+      
+      <div class="info-card">
+        <h3>NFT状态</h3>
+        <div class="info-item">
+          <span class="label">持有NFT总数:</span>
+          <span id="nft-total">0</span>
+        </div>
+        <div class="info-item">
+          <span class="label">可出售NFT数量:</span>
+          <span id="nft-sellable">0</span>
+        </div>
+      </div>
+      
+      <div class="record-list">
+        <h3>邀请记录列表</h3>
+        <div id="records-container"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 注意: 实际使用需要替换为真实API端点
+    const API_BASE_URL = '/api';
+    
+    document.getElementById('search-btn').addEventListener('click', async () => {
+      const address = document.getElementById('address-input').value.trim();
+      
+      if (!address || !address.startsWith('0x') || address.length !== 42) {
+        showError('请输入有效的ETH地址');
+        return;
+      }
+      
+      try {
+        showLoading();
+        clearResults();
+        
+        // 并行请求所有数据
+        const [inviterInfo, nftStatus, inviteRecords] = await Promise.all([
+          fetchInviterInfo(address),
+          fetchNFTStatus(address),
+          fetchInviteRecords(address)
+        ]);
+        
+        // 显示结果
+        displayResults(inviterInfo, nftStatus, inviteRecords);
+      } catch (error) {
+        console.error('Error:', error);
+        showError('查询失败，请稍后重试: ' + error.message);
+      } finally {
+        hideLoading();
+      }
+    });
+    
+    async function fetchInviterInfo(address) {
+      // 从API获取真实数据而不是使用模拟数据
+      const response = await fetch(`${API_BASE_URL}/inviterInfo?address=${address}`);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || '获取邀请信息失败');
+      }
+      return await response.json();
+    }
+    
+    async function fetchNFTStatus(address) {
+      // 从API获取真实数据
+      const response = await fetch(`${API_BASE_URL}/nftStatus?address=${address}`);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || '获取NFT状态失败');
+      }
+      return await response.json();
+    }
+    
+    async function fetchInviteRecords(address) {
+      // 从API获取真实数据
+      const response = await fetch(`${API_BASE_URL}/inviteRecords?address=${address}`);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || '获取邀请记录失败');
+      }
+      return await response.json();
+    }
+    
+    function displayResults(inviterInfo, nftStatus, inviteRecords) {
+      // 显示基本信息
+      document.getElementById('invite-total').textContent = inviterInfo.inviteTotal || 0;
+      document.getElementById('commission').textContent = `${inviterInfo.commission || 0} ETH`;
+      
+      // 显示NFT状态
+      document.getElementById('nft-total').textContent = nftStatus.total || 0;
+      document.getElementById('nft-sellable').textContent = nftStatus.sellable || 0;
+      
+      // 显示邀请记录
+      const recordsContainer = document.getElementById('records-container');
+      
+      if (!inviteRecords || inviteRecords.length === 0) {
+        recordsContainer.innerHTML = '<p>暂无邀请记录</p>';
+      } else {
+        recordsContainer.innerHTML = '';
+        inviteRecords.forEach(record => {
+          // 格式化地址显示
+          const formatAddress = (addr) => addr ? 
+            `${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}` : 
+            '未知地址';
+          
+          // 格式化时间显示
+          const timestamp = record.timestamp ? 
+            new Date(record.timestamp).toLocaleString() : 
+            '未知时间';
+          
+          const recordElement = document.createElement('div');
+          recordElement.className = 'record-item';
+          recordElement.innerHTML = `
+            <div class="record-header">
+              <span>被邀请人: ${formatAddress(record.invitedUser)}</span>
+              <span>${timestamp}</span>
+            </div>
+            <div class="record-details">
+              <div>购买数量: ${record.nftAmount || 0}</div>
+              <div>购买金额: ${record.value || 0} ETH</div>
+              <div>佣金: ${record.commission || 0} ETH</div>
+              <div>交易哈希: ${record.txHash ? 
+                `<a href="https://bscscan.com/tx/${record.txHash}" target="_blank">${record.txHash.substring(0, 10)}...</a>` : 
+                '未知'}</div>
+            </div>
+          `;
+          recordsContainer.appendChild(recordElement);
+        });
+      }
+      
+      document.getElementById('results-container').style.display = 'block';
+    }
+    
+    function showLoading() {
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('error-container').style.display = 'none';
+      document.getElementById('results-container').style.display = 'none';
+    }
+    
+    function hideLoading() {
+      document.getElementById('loading').style.display = 'none';
+    }
+    
+    function showError(message) {
+      const errorContainer = document.getElementById('error-container');
+      errorContainer.textContent = message;
+      errorContainer.style.display = 'block';
+      document.getElementById('results-container').style.display = 'none';
+    }
+    
+    function clearResults() {
+      document.getElementById('records-container').innerHTML = '';
+    }
+  </script>
+</body>
+</html> 
