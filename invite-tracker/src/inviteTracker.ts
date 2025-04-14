@@ -33,7 +33,7 @@ async function getInviteRecords(inviterAddress: string) {
     
     // 获取过去的事件（根据需要调整区块范围）
     // 注意: 生产环境中应该分块查询或使用专业索引服务
-    const events = await contract.queryFilter(filter, -10000, 'latest');
+    const events = await contract.queryFilter(filter, 48295246, 'latest');
     
     // 解析事件数据
     const inviteRecords = await Promise.all(events.map(async (event) => {
