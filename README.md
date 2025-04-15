@@ -125,3 +125,117 @@ https://www.fomodoge.com/pic/430.png
 ## 邀请记录
 
 [fd/invite-tracker at main · k1lox/fd](https://github.com/k1lox/fd/tree/main/invite-tracker)
+
+## NFT质押功能
+
+### deposit函数用法
+
+```solidity
+function deposit(uint id, uint256[] memory usrTokens) public;
+```
+
+- `id`：存款池ID，指定要存入的池子
+- `usrTokens`：要存入的NFT ID数组
+- 存款条件：
+  - 存款池必须存在（startTime > 0）
+  - 存款池必须未结束（当前时间 <= endTime）
+  - NFT必须属于调用者且未被质押
+
+使用示例：
+```javascript
+// 存入ID为1、2、3的NFT到存款池1
+await fomodoge.deposit(1, [1, 2, 3]);
+```
+
+### withdrawDepositReward函数用法
+
+```solidity
+function withdrawDepositReward(uint id) public nonReentrant;
+```
+
+- `id`：要从中提取奖励的存款池ID
+- 提取条件：
+  - 存款池必须存在（startTime > 0）
+  - 存款池必须已结束（当前时间 > endTime）
+  - 用户必须有奖励可提取（奖励金额 > 0）
+
+使用示例：
+```javascript
+// 从存款池1中提取奖励
+await fomodoge.withdrawDepositReward(1);
+```
+
+### 如何获取每个deposit池子的基本信息
+
+```solidity
+mapping(uint => DepositPool) public depositPool;
+
+struct DepositPool {
+    uint startTime;         // 池子开始时间
+    uint endTime;           // 池子结束时间
+    uint tokenAmount;       // 奖励代币总量
+    uint pointsTotalAdv;    // 累积的积分总量（不要读这个）
+    uint depositUsrAmounts; // 存款用户数量
+    uint depositNFTAmounts; // 存款NFT总数
+    uint usrLatestDepositTime; // 最近一次存款时间
+}
+```
+
+使用示例：
+```javascript
+// 获取ID为1的存款池信息
+const poolInfo = await fomodoge.depositPool(1);
+console.log("池子开始时间:", new Date(Number(poolInfo.startTime) * 1000));
+console.log("池子结束时间:", new Date(Number(poolInfo.endTime) * 1000));
+console.log("奖励代币总量:", ethers.utils.formatEther(poolInfo.tokenAmount));
+console.log("存款用户数量:", poolInfo.depositUsrAmounts.toString());
+console.log("存款NFT总数:", poolInfo.depositNFTAmounts.toString());
+```
+
+### 如何获取指定用户在指定池子的基本信息
+
+```solidity
+mapping(address => mapping(uint => UsrDepositInfo)) public usrDepositInfo;
+
+struct UsrDepositInfo {
+    uint[] usrDepositNfts;      // 用户存入的NFT ID数组
+    uint usrDepositPointsAdv;   // 用户累积的积分（不要读这个）
+    uint usrLatestDepositTime;  // 用户最近一次存款时间
+    uint usrDepositAmounts;     // 用户存入的NFT数量
+}
+```
+
+使用示例：
+```javascript
+// 获取用户在ID为1的存款池中的信息
+const userDepositInfo = await fomodoge.usrDepositInfo(userAddress, 1);
+console.log("用户存入NFT数量:", userDepositInfo.usrDepositAmounts.toString());
+console.log("用户最近存款时间:", new Date(Number(userDepositInfo.usrLatestDepositTime) * 1000));
+console.log("用户累积积分:", userDepositInfo.usrDepositPointsAdv.toString());
+
+// 获取用户存入的所有NFT ID
+const nftIds = userDepositInfo.usrDepositNfts;
+console.log("用户存入的NFT IDs:", nftIds.map(id => id.toString()));
+```
+
+### 如何获取指定用户在指定池子质押结束后预计获得的ERC20代币数量
+
+```solidity
+function getUsrDepositReward(address usr, uint id) public view returns(uint);
+```
+
+- `usr`：用户地址
+- `id`：存款池ID
+- 返回值：用户可获得的ERC20代币奖励数量
+
+使用示例：
+```javascript
+// 获取用户在ID为1的存款池中的预计奖励
+const reward = await fomodoge.getUsrDepositReward(userAddress, 1);
+console.log("预计获得奖励:", ethers.utils.formatEther(reward), "代币");
+```
+
+奖励计算方式：
+- 基于用户在池中的积分占比分配奖励
+- 积分 = 存款NFT数量 × 存款时长
+- 用户奖励 = 池子总奖励 × (用户积分 / 池子总积分)

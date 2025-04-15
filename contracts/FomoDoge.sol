@@ -43,7 +43,7 @@ contract FomoDoge is ERC721A("FomoDoge", "FomoDoge"), Ownable, ReentrancyGuard{
         uint nftId;
         uint PoolId;
         uint pos;
-        // address owner;
+        bool isDeposit;
     }
 
     mapping(uint => NftInfo) public nftInfo;
@@ -68,18 +68,25 @@ contract FomoDoge is ERC721A("FomoDoge", "FomoDoge"), Ownable, ReentrancyGuard{
     mapping(address => UsrInfo) public usrInfo;
     
     struct DepositPool{
-        uint startDepositTime;
         uint startTime;
         uint endTime;
         uint tokenAmount;
-        uint tokenAmountForEach;
-        uint nftAmount;
+        uint pointsTotalAdv;
+        uint depositUsrAmounts;
+        uint depositNFTAmounts;
+        uint usrLatestDepositTime;
     }
 
+    struct UsrDepositInfo{
+        uint[] usrDepositNfts;
+        uint usrDepositPointsAdv;
+        uint usrLatestDepositTime;
+        uint usrDepositAmounts;
+    }
+
+    mapping(address => mapping(uint => UsrDepositInfo)) public usrDepositInfo;
     mapping(uint => DepositPool) public depositPool;
     address public erc20Token;
-    mapping(uint => uint) public nftToPool;
-    mapping(address => uint[]) public addressToNft;
 
     event Buy(address indexed usr, address indexed inviter, uint amount, uint indexed value);
     event Sell(address indexed usr, uint amount, uint value);
@@ -88,6 +95,10 @@ contract FomoDoge is ERC721A("FomoDoge", "FomoDoge"), Ownable, ReentrancyGuard{
     constructor(){
         fomoInfo.endTime = block.timestamp + MAX_FOMO_TIME;
         _protocol = msg.sender;
+    }
+
+    function setErc20Token(address erc20TokenAddress) public onlyOwner() {
+        erc20Token = erc20TokenAddress;
     }
 
     function getUsrNftInfo(address usr) public view returns(NftInfo[] memory) {
@@ -100,6 +111,25 @@ contract FomoDoge is ERC721A("FomoDoge", "FomoDoge"), Ownable, ReentrancyGuard{
         
         return nftsInfo;
     }
+    function _afterTokenTransfers(
+        address from,
+        address to,
+        uint256 startTokenId,
+        uint256 quantity
+    ) internal override {
+        if(fomoInfo.endTime > block.timestamp){
+            if(to != address(0) && from != address(0)){
+                usrInfo[from].usrBalanceForShare = balanceOf(from);
+                usrInfo[to].usrBalanceForShare = balanceOf(to);
+            }
+            else if(to == address(0)){
+                usrInfo[from].usrBalanceForShare = balanceOf(from);
+            }
+            else{
+                usrInfo[to].usrBalanceForShare = balanceOf(to);
+            }
+        }
+    }
 
     function _beforeTokenTransfers(
         address from,
@@ -109,6 +139,7 @@ contract FomoDoge is ERC721A("FomoDoge", "FomoDoge"), Ownable, ReentrancyGuard{
     ) internal override {
         if(to != address(0) && from != address(0)){
             require(quantity == 1);
+            require(!nftInfo[startTokenId].isDeposit, "NFT not deposited");
             // 移除
             usrInfo[from].ownedNfts[nftInfo[startTokenId].pos]
                 = usrInfo[from].ownedNfts[usrInfo[from].ownedNfts.length - 1];
@@ -123,6 +154,7 @@ contract FomoDoge is ERC721A("FomoDoge", "FomoDoge"), Ownable, ReentrancyGuard{
             // nftInfo[startTokenId].owner = to;
         }else if(to == address(0)){
             require(quantity == 1);
+            require(!nftInfo[startTokenId].isDeposit, "NFT not deposited");
             // from 移除id
             usrInfo[from].ownedNfts[nftInfo[startTokenId].pos]
                 = usrInfo[from].ownedNfts[usrInfo[from].ownedNfts.length - 1];
@@ -138,7 +170,8 @@ contract FomoDoge is ERC721A("FomoDoge", "FomoDoge"), Ownable, ReentrancyGuard{
                 nftId: 0,
                 PoolId: 0,
                 // owner: address(0),
-                pos: 0
+                pos: 0,
+                isDeposit: false
             });  
         }else{
             uint beforeLength = usrInfo[to].ownedNfts.length;
@@ -150,7 +183,8 @@ contract FomoDoge is ERC721A("FomoDoge", "FomoDoge"), Ownable, ReentrancyGuard{
                     nftId: i,
                     PoolId: 0,
                     // owner: to,
-                    pos: beforeLength + i - startTokenId
+                    pos: beforeLength + i - startTokenId,
+                    isDeposit: false
                 });  
             }
         }
@@ -176,10 +210,6 @@ contract FomoDoge is ERC721A("FomoDoge", "FomoDoge"), Ownable, ReentrancyGuard{
             }else if(lockType == 70){
                 nftInfo[i].unLockTime = block.timestamp + SEVENTY_OFF_LOCK_TIME;
             }
-        }
-
-        if(fomoInfo.endTime > block.timestamp){
-            usrInfo[msg.sender].usrBalanceForShare = balanceOf(msg.sender);
         }
 
         usrInfo[inviteAddress].usrBalance += valueUsed * INVITER_SHARE / 100;
@@ -223,10 +253,6 @@ contract FomoDoge is ERC721A("FomoDoge", "FomoDoge"), Ownable, ReentrancyGuard{
             }
         }
 
-        if(fomoInfo.endTime > block.timestamp){
-            usrInfo[msg.sender].usrBalanceForShare = balanceOf(msg.sender);
-        }
-
         usrInfo[_protocol].usrBalance += valueUsed * PROTOCOL_SHARE / 100;
         
         if(fomoInfo.endTime > block.timestamp){
@@ -255,9 +281,7 @@ contract FomoDoge is ERC721A("FomoDoge", "FomoDoge"), Ownable, ReentrancyGuard{
             }
         }
 
-        if(fomoInfo.endTime > block.timestamp){
-            usrInfo[msg.sender].usrBalanceForShare = balanceOf(msg.sender);
-        }else{
+        if(fomoInfo.endTime <= block.timestamp){
             fomoPlay(address(0), 0);
         }
 
@@ -363,80 +387,105 @@ contract FomoDoge is ERC721A("FomoDoge", "FomoDoge"), Ownable, ReentrancyGuard{
         return string(abi.encodePacked(baseURI, x.toString(),".json"));
     }
 
-    // function createDepositPool(uint id, uint tokenAmount, uint startTime, uint endTime) public onlyOwner() {
-    //     require(depositPool[id].startDepositTime == 0, "Pool Already Created");
-    //     require(startTime >= block.timestamp && endTime - startTime <= 7 days, "Error Time");
-    //     require(IERC20(erc20Token).transferFrom(msg.sender, address(this), tokenAmount), "Token transfer failed");
+    // deposit pool
+    function createDepositPool(uint id, uint tokenAmount) public onlyOwner() {
+        require(depositPool[id].startTime == 0, "Pool Already Created");
 
-    //     depositPool[id] = DepositPool({
-    //         startDepositTime: block.timestamp,
-    //         startTime: startTime,
-    //         tokenAmount: tokenAmount,
-    //         endTime: endTime,
-    //         tokenAmountForEach: 0,
-    //         nftAmount: 0
-    //     });
-    // }
+        depositPool[id] = DepositPool({
+            startTime:  block.timestamp,
+            endTime: block.timestamp + 7 days,
+            tokenAmount: tokenAmount,
+            pointsTotalAdv: 0,
+            depositUsrAmounts: 0,
+            depositNFTAmounts: 0,
+            usrLatestDepositTime: block.timestamp
+        });
 
-    // function deposit(uint id, uint256[] memory usrTokens) public {
-    //     require(depositPool[id].startDepositTime > 0, "Pool does not exist");
-    //     require(
-    //         block.timestamp >= depositPool[id].startDepositTime && 
-    //         block.timestamp <= depositPool[id].startTime,
-    //         "Not in deposit period"
-    //     );
+        require(IERC20(erc20Token).transferFrom(msg.sender, address(this), tokenAmount), "Token transfer failed");
+    }
 
-    //     uint validTokens = 0;
+    function deposit(uint id, uint256[] memory usrTokens) public {
+        require(depositPool[id].startTime > 0 , "Pool does not exist");
+        require(depositPool[id].endTime >= block.timestamp, "Pool ended");
+
+        uint validTokens = 0;
         
-    //     for(uint i = 0; i < usrTokens.length; i++) {
-    //         uint tokenId = usrTokens[i];
-    //         if(ownerOf(tokenId) == msg.sender) {
-    //             transferFrom(msg.sender, address(this), tokenId);
+        for(uint i = 0; i < usrTokens.length; i++) {
+            uint tokenId = usrTokens[i];
+            if(ownerOf(tokenId) == msg.sender && !nftInfo[tokenId].isDeposit) {
+                nftInfo[tokenId].isDeposit = true;
+                                
+                usrDepositInfo[msg.sender][id].usrDepositNfts.push(tokenId);
                 
-    //             nftToPool[tokenId] = id;
-                
-    //             addressToNft[msg.sender].push(tokenId);
-                
-    //             validTokens++;
-    //         }
-    //     }
-        
-    //     require(validTokens > 0, "No valid tokens to deposit");
-        
-    //     depositPool[id].nftAmount += validTokens;
-    // }
+                validTokens++;
+            }
+        }
 
-    // function withdraw(uint id) public nonReentrant {
-    //     require(depositPool[id].startDepositTime > 0, "Pool does not exist");
-    //     require(block.timestamp >= depositPool[id].endTime, "Pool not ended yet");
-
-    //     if(depositPool[id].tokenAmountForEach == 0 && depositPool[id].startTime <= block.timestamp) {
-    //         depositPool[id].tokenAmountForEach = depositPool[id].tokenAmount / depositPool[id].nftAmount;
-    //     }
-        
-    //     uint[] storage userNfts = addressToNft[msg.sender];
-    //     require(userNfts.length > 0, "No NFTs to withdraw");
-        
-    //     uint userTokenAmount = 0;
-    //     uint nftCount = 0;
-        
-    //     for(uint i = 0; i < userNfts.length; i++) {
-    //         uint tokenId = userNfts[i];
+        // pool
+        depositPool[id].pointsTotalAdv += 
+            depositPool[id].depositNFTAmounts * (block.timestamp - depositPool[id].usrLatestDepositTime);
             
-    //         if(nftToPool[tokenId] == id) {
-    //             IERC721(address(this)).transferFrom(address(this), msg.sender, tokenId);
-                
-    //             nftToPool[tokenId] = 0;
-                
-    //             nftCount++;
-    //             userTokenAmount += depositPool[id].tokenAmountForEach;
-    //         }
-    //     }
+        depositPool[id].depositUsrAmounts += usrDepositInfo[msg.sender][id].usrDepositAmounts == 0 ? 1 : 0;
+        depositPool[id].depositNFTAmounts += validTokens;
+        depositPool[id].usrLatestDepositTime = block.timestamp;
+
+        // usr
+        usrDepositInfo[msg.sender][id].usrDepositPointsAdv += 
+            usrDepositInfo[msg.sender][id].usrDepositAmounts * 
+            (usrDepositInfo[msg.sender][id].usrLatestDepositTime == 0 ? 
+            (block.timestamp - depositPool[id].startTime) : 
+            (block.timestamp - usrDepositInfo[msg.sender][id].usrLatestDepositTime));
+
+        usrDepositInfo[msg.sender][id].usrDepositAmounts += validTokens;
+        usrDepositInfo[msg.sender][id].usrLatestDepositTime = block.timestamp;
         
-    //     require(nftCount > 0, "No valid NFTs to withdraw");
-        
-    //     delete addressToNft[msg.sender];
-        
-    //     require(IERC20(erc20Token).transfer(msg.sender, userTokenAmount), "Token transfer failed");
-    // }
+        require(validTokens > 0, "No valid tokens to deposit");
+    }
+
+    function getUsrPointsFinal(address usr, uint id) internal view returns(uint){
+        return usrDepositInfo[usr][id].usrDepositPointsAdv + 
+            usrDepositInfo[usr][id].usrDepositAmounts * 
+            (
+                block.timestamp >= depositPool[id].endTime ? 
+                depositPool[id].endTime - depositPool[id].usrLatestDepositTime : 
+                block.timestamp - depositPool[id].usrLatestDepositTime
+            );
+    }
+
+    function getPoolPointsFinal(uint id) internal view returns(uint){
+        return depositPool[id].pointsTotalAdv + 
+            depositPool[id].depositNFTAmounts * 
+            (
+                block.timestamp >= depositPool[id].endTime ? 
+                depositPool[id].endTime - depositPool[id].usrLatestDepositTime : 
+                block.timestamp - depositPool[id].usrLatestDepositTime
+            );
+    }
+
+    function getUsrDepositReward(address usr, uint id) public view returns(uint){
+        require(depositPool[id].startTime > 0, "Pool does not exist");
+        require(getPoolPointsFinal(id) > 0, "Pool points is 0");
+        return depositPool[id].tokenAmount * getUsrPointsFinal(usr, id) / getPoolPointsFinal(id);
+    }
+
+    function withdrawDepositReward(uint id) public nonReentrant {
+        require(depositPool[id].startTime > 0, "Pool does not exist");
+        require(block.timestamp >= depositPool[id].endTime, "Pool not ended yet");
+
+        uint usrDepositReward = getUsrDepositReward(msg.sender, id);
+
+        require(usrDepositReward > 0, "No reward to withdraw");
+
+        for(uint i = 0; i < usrDepositInfo[msg.sender][id].usrDepositNfts.length; i++) {
+            require(nftInfo[usrDepositInfo[msg.sender][id].usrDepositNfts[i]].isDeposit, "NFT not deposited");
+            nftInfo[usrDepositInfo[msg.sender][id].usrDepositNfts[i]].isDeposit = false;
+        }
+
+        delete usrDepositInfo[msg.sender][id].usrDepositNfts;
+        usrDepositInfo[msg.sender][id].usrDepositPointsAdv = 0;
+        usrDepositInfo[msg.sender][id].usrLatestDepositTime = 0;
+        usrDepositInfo[msg.sender][id].usrDepositAmounts = 0;
+
+        require(IERC20(erc20Token).transfer(msg.sender, usrDepositReward), "Token transfer failed");
+    }
 }
