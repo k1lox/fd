@@ -1,5 +1,13 @@
 [GitHub - k1lox/fd](https://github.com/k1lox/fd)
 
+## 合约地址
+0x580DE219b997aF4d479b39777eeBe3b8f976D913
+起始区块：
+48415777
+
+测试代币地址：
+0x0437c8d767755Ae2Bb3314700C49605cBC0a49a2
+
 ## 核心功能
 
 ### 🎮 FOMO 游戏机制
@@ -126,116 +134,217 @@ https://www.fomodoge.com/pic/430.png
 
 [fd/invite-tracker at main · k1lox/fd](https://github.com/k1lox/fd/tree/main/invite-tracker)
 
-## NFT质押功能
+// 如何deposit
+// 如何查看可领取的reward
+// 如何领取reward
+// 领取reward后，如果该池子质押结束，方可解除质押状态
 
-### deposit函数用法
+## 存款和奖励管理
 
-```solidity
-function deposit(uint id, uint256[] memory usrTokens) public;
-```
-
-- `id`：存款池ID，指定要存入的池子
-- `usrTokens`：要存入的NFT ID数组
-- 存款条件：
-  - 存款池必须存在（startTime > 0）
-  - 存款池必须未结束（当前时间 <= endTime）
-  - NFT必须属于调用者且未被质押
-
-使用示例：
-```javascript
-// 存入ID为1、2、3的NFT到存款池1
-await fomodoge.deposit(1, [1, 2, 3]);
-```
-
-### withdrawDepositReward函数用法
+### 存入ETH (Deposit)
 
 ```solidity
-function withdrawDepositReward(uint id) public nonReentrant;
+function deposit() external payable;
 ```
 
-- `id`：要从中提取奖励的存款池ID
-- 提取条件：
-  - 存款池必须存在（startTime > 0）
-  - 存款池必须已结束（当前时间 > endTime）
-  - 用户必须有奖励可提取（奖励金额 > 0）
+用户可以向合约存入ETH，用于购买NFT或参与流动性池。
 
-使用示例：
-```javascript
-// 从存款池1中提取奖励
-await fomodoge.withdrawDepositReward(1);
-```
+```tsx
+// 存入ETH到合约
+async function depositETH(amount, contract) {
+  try {
+    // 金额转换为wei
+    const amountInWei = ethers.utils.parseEther(amount.toString());
+    
+    const tx = await contract.deposit({ value: amountInWei });
+    const receipt = await tx.wait();
+    
+    return {
+      success: true,
+      txHash: receipt.transactionHash
+    };
+  } catch (error) {
+    console.error("Deposit failed:", error);
+    return { success: false, error };
+  }
+}
 
-### 如何获取每个deposit池子的基本信息
-
-```solidity
-mapping(uint => DepositPool) public depositPool;
-
-struct DepositPool {
-    uint startTime;         // 池子开始时间
-    uint endTime;           // 池子结束时间
-    uint tokenAmount;       // 奖励代币总量
-    uint pointsTotalAdv;    // 累积的积分总量（不要读这个）
-    uint depositUsrAmounts; // 存款用户数量
-    uint depositNFTAmounts; // 存款NFT总数
-    uint usrLatestDepositTime; // 最近一次存款时间
+// 获取用户在合约中的存款余额
+async function getUserBalance(address, contract) {
+  const userInfo = await contract.usrInfo(address);
+  return ethers.utils.formatEther(userInfo.usrBalance);
 }
 ```
 
-使用示例：
-```javascript
-// 获取ID为1的存款池信息
-const poolInfo = await fomodoge.depositPool(1);
-console.log("池子开始时间:", new Date(Number(poolInfo.startTime) * 1000));
-console.log("池子结束时间:", new Date(Number(poolInfo.endTime) * 1000));
-console.log("奖励代币总量:", ethers.utils.formatEther(poolInfo.tokenAmount));
-console.log("存款用户数量:", poolInfo.depositUsrAmounts.toString());
-console.log("存款NFT总数:", poolInfo.depositNFTAmounts.toString());
-```
-
-### 如何获取指定用户在指定池子的基本信息
+### 查看可领取的奖励 (Check Rewards)
 
 ```solidity
-mapping(address => mapping(uint => UsrDepositInfo)) public usrDepositInfo;
+function usrCanWithdraw(address usr) external view returns (uint);
+```
 
-struct UsrDepositInfo {
-    uint[] usrDepositNfts;      // 用户存入的NFT ID数组
-    uint usrDepositPointsAdv;   // 用户累积的积分（不要读这个）
-    uint usrLatestDepositTime;  // 用户最近一次存款时间
-    uint usrDepositAmounts;     // 用户存入的NFT数量
+用户可以查看自己当前可以提取的奖励金额。
+
+```tsx
+// 获取用户可提取的奖励金额
+async function getClaimableRewards(address, contract) {
+  try {
+    const rewardsWei = await contract.usrCanWithdraw(address);
+    const rewardsETH = ethers.utils.formatEther(rewardsWei);
+    
+    return {
+      success: true,
+      rewards: rewardsETH,
+      rewardsWei
+    };
+  } catch (error) {
+    console.error("Failed to fetch rewards:", error);
+    return { success: false, rewards: "0", error };
+  }
 }
 ```
 
-使用示例：
-```javascript
-// 获取用户在ID为1的存款池中的信息
-const userDepositInfo = await fomodoge.usrDepositInfo(userAddress, 1);
-console.log("用户存入NFT数量:", userDepositInfo.usrDepositAmounts.toString());
-console.log("用户最近存款时间:", new Date(Number(userDepositInfo.usrLatestDepositTime) * 1000));
-console.log("用户累积积分:", userDepositInfo.usrDepositPointsAdv.toString());
-
-// 获取用户存入的所有NFT ID
-const nftIds = userDepositInfo.usrDepositNfts;
-console.log("用户存入的NFT IDs:", nftIds.map(id => id.toString()));
-```
-
-### 如何获取指定用户在指定池子质押结束后预计获得的ERC20代币数量
+### 领取奖励 (Claim Rewards)
 
 ```solidity
-function getUsrDepositReward(address usr, uint id) public view returns(uint);
+function withdraw() external;
 ```
 
-- `usr`：用户地址
-- `id`：存款池ID
-- 返回值：用户可获得的ERC20代币奖励数量
+用户可以提取所有可用奖励，包括邀请奖励和FOMO分配。
 
-使用示例：
-```javascript
-// 获取用户在ID为1的存款池中的预计奖励
-const reward = await fomodoge.getUsrDepositReward(userAddress, 1);
-console.log("预计获得奖励:", ethers.utils.formatEther(reward), "代币");
+```tsx
+// 提取用户的奖励
+async function claimRewards(contract) {
+  try {
+    const tx = await contract.withdraw();
+    const receipt = await tx.wait();
+    
+    return {
+      success: true,
+      txHash: receipt.transactionHash
+    };
+  } catch (error) {
+    console.error("Rewards claim failed:", error);
+    return { success: false, error };
+  }
+}
 ```
 
-奖励计算方式：
-- 基于用户在池中的积分占比分配奖励
-- 积分 = 存款NFT数量 × 存款时长
-- 用户奖励 = 池子总奖励 × (用户积分 / 池子总积分)
+### 解除质押 (Unstake)
+
+在用户领取奖励后，如果该池子的质押周期已结束，则可以解除质押状态。
+
+```tsx
+// 检查质押池状态
+async function checkStakingPoolStatus(poolId, contract) {
+  try {
+    const poolInfo = await contract.stakingPools(poolId);
+    const currentTime = Math.floor(Date.now() / 1000);
+    
+    return {
+      success: true,
+      isEnded: currentTime > poolInfo.endTime,
+      endTime: new Date(Number(poolInfo.endTime) * 1000)
+    };
+  } catch (error) {
+    console.error("Failed to check pool status:", error);
+    return { success: false, error };
+  }
+}
+
+// 解除质押
+async function unstake(poolId, amount, contract) {
+  try {
+    const tx = await contract.unstake(poolId, amount);
+    const receipt = await tx.wait();
+    
+    return {
+      success: true,
+      txHash: receipt.transactionHash
+    };
+  } catch (error) {
+    console.error("Unstaking failed:", error);
+    return { success: false, error };
+  }
+}
+```
+
+## 前端集成示例
+
+```jsx
+function RewardsManager() {
+  const [claimableRewards, setClaimableRewards] = useState("0");
+  const [userBalance, setUserBalance] = useState("0");
+  const [isLoading, setIsLoading] = useState(false);
+  
+  useEffect(() => {
+    if (account) {
+      fetchUserData();
+    }
+  }, [account]);
+  
+  async function fetchUserData() {
+    const rewards = await getClaimableRewards(account, contract);
+    const balance = await getUserBalance(account, contract);
+    
+    if (rewards.success) setClaimableRewards(rewards.rewards);
+    setUserBalance(balance);
+  }
+  
+  const handleDeposit = async (amount) => {
+    setIsLoading(true);
+    const result = await depositETH(amount, contract);
+    setIsLoading(false);
+    
+    if (result.success) {
+      fetchUserData();
+      toast.success("存款成功！");
+    } else {
+      toast.error("存款失败，请重试");
+    }
+  };
+  
+  const handleClaim = async () => {
+    setIsLoading(true);
+    const result = await claimRewards(contract);
+    setIsLoading(false);
+    
+    if (result.success) {
+      fetchUserData();
+      toast.success("奖励已成功领取！");
+    } else {
+      toast.error("领取失败，请重试");
+    }
+  };
+  
+  return (
+    <div className="rewards-container">
+      <div className="balance-info">
+        <h3>你的余额</h3>
+        <p>{userBalance} ETH</p>
+      </div>
+      
+      <div className="rewards-info">
+        <h3>可领取奖励</h3>
+        <p>{claimableRewards} ETH</p>
+        <button 
+          disabled={isLoading || claimableRewards === "0"} 
+          onClick={handleClaim}
+        >
+          {isLoading ? "处理中..." : "领取奖励"}
+        </button>
+      </div>
+      
+      <div className="deposit-form">
+        <h3>存入ETH</h3>
+        <input type="number" min="0" step="0.01" placeholder="输入ETH数量" />
+        <button 
+          disabled={isLoading} 
+          onClick={() => handleDeposit(depositAmount)}
+        >
+          {isLoading ? "处理中..." : "存入"}
+        </button>
+      </div>
+    </div>
+  );
+}
+```

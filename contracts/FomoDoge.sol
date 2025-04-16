@@ -30,6 +30,8 @@ contract FomoDoge is ERC721A("FomoDoge", "FomoDoge"), Ownable, ReentrancyGuard{
     uint256 public constant FOMO_WINNER_SHARE = 10; 
     uint256 public constant FOMO_ALL_SHARE = 50; 
 
+    uint256 public constant DEPOSIT_TIME = 7 days; 
+
     string public constant WEB = "https://fomodoge.com";
     string public constant X = "https://x.com/FomoDogeX";
     string public constant TELEGRAM = "https://t.me/FomodogeETH";
@@ -71,17 +73,19 @@ contract FomoDoge is ERC721A("FomoDoge", "FomoDoge"), Ownable, ReentrancyGuard{
         uint startTime;
         uint endTime;
         uint tokenAmount;
-        uint pointsTotalAdv;
         uint depositUsrAmounts;
         uint depositNFTAmounts;
         uint usrLatestDepositTime;
+        uint speed;
+        uint speedSquare;
     }
 
     struct UsrDepositInfo{
         uint[] usrDepositNfts;
         uint usrDepositPointsAdv;
-        uint usrLatestDepositTime;
+        uint usrLatestDepositSquare;
         uint usrDepositAmounts;
+        uint rewardWithdrawed;
     }
 
     mapping(address => mapping(uint => UsrDepositInfo)) public usrDepositInfo;
@@ -393,12 +397,13 @@ contract FomoDoge is ERC721A("FomoDoge", "FomoDoge"), Ownable, ReentrancyGuard{
 
         depositPool[id] = DepositPool({
             startTime:  block.timestamp,
-            endTime: block.timestamp + 7 days,
+            endTime: block.timestamp + DEPOSIT_TIME,
             tokenAmount: tokenAmount,
-            pointsTotalAdv: 0,
             depositUsrAmounts: 0,
             depositNFTAmounts: 0,
-            usrLatestDepositTime: block.timestamp
+            usrLatestDepositTime: block.timestamp,
+            speed: 0,
+            speedSquare: 0
         });
 
         require(IERC20(erc20Token).transferFrom(msg.sender, address(this), tokenAmount), "Token transfer failed");
@@ -422,69 +427,52 @@ contract FomoDoge is ERC721A("FomoDoge", "FomoDoge"), Ownable, ReentrancyGuard{
         }
 
         // pool
-        depositPool[id].pointsTotalAdv += 
-            depositPool[id].depositNFTAmounts * (block.timestamp - depositPool[id].usrLatestDepositTime);
-            
         depositPool[id].depositUsrAmounts += usrDepositInfo[msg.sender][id].usrDepositAmounts == 0 ? 1 : 0;
         depositPool[id].depositNFTAmounts += validTokens;
+        // old square
+        depositPool[id].speedSquare += depositPool[id].speed * (block.timestamp - depositPool[id].usrLatestDepositTime);
         depositPool[id].usrLatestDepositTime = block.timestamp;
+        // new speed
+        depositPool[id].speed = depositPool[id].tokenAmount / DEPOSIT_TIME / depositPool[id].depositNFTAmounts;
 
         // usr
-        usrDepositInfo[msg.sender][id].usrDepositPointsAdv += 
-            usrDepositInfo[msg.sender][id].usrDepositAmounts * 
-            (usrDepositInfo[msg.sender][id].usrLatestDepositTime == 0 ? 
-            (block.timestamp - depositPool[id].startTime) : 
-            (block.timestamp - usrDepositInfo[msg.sender][id].usrLatestDepositTime));
-
+        usrDepositInfo[msg.sender][id].usrDepositPointsAdv += usrDepositInfo[msg.sender][id].usrDepositAmounts * 
+            (depositPool[id].speedSquare - usrDepositInfo[msg.sender][id].usrLatestDepositSquare);
         usrDepositInfo[msg.sender][id].usrDepositAmounts += validTokens;
-        usrDepositInfo[msg.sender][id].usrLatestDepositTime = block.timestamp;
+        usrDepositInfo[msg.sender][id].usrLatestDepositSquare = depositPool[id].speedSquare;
         
         require(validTokens > 0, "No valid tokens to deposit");
     }
 
-    function getUsrPointsFinal(address usr, uint id) internal view returns(uint){
-        return usrDepositInfo[usr][id].usrDepositPointsAdv + 
+    function getUsrDepositReward(address usr, uint id) public view returns(uint){
+        require(depositPool[id].startTime > 0, "Pool does not exist");
+
+        uint reward = usrDepositInfo[usr][id].usrDepositPointsAdv + 
             usrDepositInfo[usr][id].usrDepositAmounts * 
             (
                 block.timestamp >= depositPool[id].endTime ? 
-                depositPool[id].endTime - depositPool[id].usrLatestDepositTime : 
-                block.timestamp - depositPool[id].usrLatestDepositTime
-            );
-    }
+                depositPool[id].speed * (depositPool[id].endTime - depositPool[id].usrLatestDepositTime) : 
+                depositPool[id].speed * (block.timestamp - depositPool[id].usrLatestDepositTime)
+            ) - 
+            usrDepositInfo[usr][id].rewardWithdrawed;
 
-    function getPoolPointsFinal(uint id) internal view returns(uint){
-        return depositPool[id].pointsTotalAdv + 
-            depositPool[id].depositNFTAmounts * 
-            (
-                block.timestamp >= depositPool[id].endTime ? 
-                depositPool[id].endTime - depositPool[id].usrLatestDepositTime : 
-                block.timestamp - depositPool[id].usrLatestDepositTime
-            );
-    }
-
-    function getUsrDepositReward(address usr, uint id) public view returns(uint){
-        require(depositPool[id].startTime > 0, "Pool does not exist");
-        require(getPoolPointsFinal(id) > 0, "Pool points is 0");
-        return depositPool[id].tokenAmount * getUsrPointsFinal(usr, id) / getPoolPointsFinal(id);
     }
 
     function withdrawDepositReward(uint id) public nonReentrant {
         require(depositPool[id].startTime > 0, "Pool does not exist");
-        require(block.timestamp >= depositPool[id].endTime, "Pool not ended yet");
 
         uint usrDepositReward = getUsrDepositReward(msg.sender, id);
 
         require(usrDepositReward > 0, "No reward to withdraw");
 
-        for(uint i = 0; i < usrDepositInfo[msg.sender][id].usrDepositNfts.length; i++) {
-            require(nftInfo[usrDepositInfo[msg.sender][id].usrDepositNfts[i]].isDeposit, "NFT not deposited");
-            nftInfo[usrDepositInfo[msg.sender][id].usrDepositNfts[i]].isDeposit = false;
+        if(block.timestamp >= depositPool[id].endTime){
+            for(uint i = 0; i < usrDepositInfo[msg.sender][id].usrDepositNfts.length; i++) {
+                require(nftInfo[usrDepositInfo[msg.sender][id].usrDepositNfts[i]].isDeposit, "NFT not deposited");
+                nftInfo[usrDepositInfo[msg.sender][id].usrDepositNfts[i]].isDeposit = false;
+            }
         }
 
-        delete usrDepositInfo[msg.sender][id].usrDepositNfts;
-        usrDepositInfo[msg.sender][id].usrDepositPointsAdv = 0;
-        usrDepositInfo[msg.sender][id].usrLatestDepositTime = 0;
-        usrDepositInfo[msg.sender][id].usrDepositAmounts = 0;
+        usrDepositInfo[msg.sender][id].rewardWithdrawed += usrDepositReward;
 
         require(IERC20(erc20Token).transfer(msg.sender, usrDepositReward), "Token transfer failed");
     }

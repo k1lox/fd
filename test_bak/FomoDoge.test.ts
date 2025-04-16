@@ -516,7 +516,7 @@ describe("FomoDoge Contract Tests", function () {
   it("Should test deposit pool functionality", async function () {
     // Deploy mock ERC20 token for deposit testing
     const MockERC20 = await ethers.getContractFactory("MockERC20");
-    const mockToken = await MockERC20.deploy("MockToken", "MTK", ethers.parseEther("1000000"));
+    const mockToken = await MockERC20.deploy("MockToken", "MTK", ethers.parseEther("10000000"));
     
     console.log(colorize.info("模拟ERC20代币部署地址:"), mockToken.target);
     
@@ -598,7 +598,7 @@ describe("FomoDoge Contract Tests", function () {
   it("应该正确测试多用户分阶段存款功能", async function () {
     // Deploy mock ERC20 token for deposit testing
     const MockERC20 = await ethers.getContractFactory("MockERC20");
-    const mockToken = await MockERC20.deploy("MockToken", "MTK", ethers.parseEther("1000000"));
+    const mockToken = await MockERC20.deploy("MockToken", "MTK", ethers.parseEther("10000000"));
     
     console.log(colorize.info("模拟ERC20代币部署地址:"), mockToken.target);
     
@@ -789,5 +789,236 @@ describe("FomoDoge Contract Tests", function () {
     expect(user2DepositedNFTsAfter.length).to.equal(0);
     
     console.log(colorize.info("\n===== 多用户分阶段存款测试完成 =====\n"));
+  });
+
+  it("诊断并测试存款池奖励计算", async function () {
+    // 部署模拟ERC20代币
+    const MockERC20 = await ethers.getContractFactory("MockERC20");
+    // 增加发行量，避免余额不足问题
+    const mockToken = await MockERC20.deploy("MockToken", "MTK", ethers.parseEther("10000000"));
+    
+    console.log(colorize.info("模拟ERC20代币部署地址:"), mockToken.target);
+    
+    // 设置ERC20代币地址
+    await fomodoge.setErc20Token(mockToken.target);
+    
+    // 购买一些NFT用于测试
+    const buyAmount = 10n;
+    const lockType = 0n; // 无锁定期
+    const dummyAddress = "0x0000000000000000000000000000000000000000";
+    const buyPrice = await fomodoge.getBuyPrice(buyAmount);
+    
+    await fomodoge.connect(users[0]).buy(buyAmount, lockType, dummyAddress, {
+      value: buyPrice
+    });
+    console.log(colorize.buyOperation(`用户购买了 ${buyAmount} 个NFT用于测试`));
+    
+    // 创建一个包含固定奖励的存款池
+    const poolId = 100;
+    const tokenAmount = ethers.parseEther("10000"); // 10,000代币奖励
+    
+    // 批准合约使用代币
+    await mockToken.approve(fomodoge.target, tokenAmount);
+    
+    // 创建存款池
+    await fomodoge.createDepositPool(poolId, tokenAmount);
+    console.log(colorize.info(`创建了ID为 ${poolId} 的存款池，奖励 ${ethers.formatEther(tokenAmount)} 代币`));
+    
+    // 查看初始池子信息
+    let poolInfo = await fomodoge.depositPool(poolId);
+    console.log(colorize.info("初始池子参数:"));
+    console.log(colorize.info(`- speed: ${poolInfo.speed}`));
+    console.log(colorize.info(`- speedSquare: ${poolInfo.speedSquare}`));
+    
+    // 存入1个NFT
+    const userNFTs = await fomodoge.getUsrNftInfo(users[0].address);
+    const nftToDeposit = [userNFTs[0].nftId];
+    
+    await fomodoge.connect(users[0]).deposit(poolId, nftToDeposit);
+    console.log(colorize.success(`存入 1 个NFT (ID: ${nftToDeposit})`));
+    
+    // 再次查看池子信息
+    poolInfo = await fomodoge.depositPool(poolId);
+    console.log(colorize.info("存款后池子参数:"));
+    console.log(colorize.info(`- speed: ${poolInfo.speed}`));
+    console.log(colorize.info(`- speedSquare: ${poolInfo.speedSquare}`));
+    
+    // 时间前进1天
+    await ethers.provider.send("evm_increaseTime", [24 * 60 * 60]);
+    await ethers.provider.send("evm_mine", []);
+    
+    // 计算奖励
+    const reward = await fomodoge.getUsrDepositReward(users[0].address, poolId);
+    console.log(colorize.success(`24小时后奖励计算: ${ethers.formatEther(reward)} MTK`));
+    
+    // 提取部分奖励
+    await fomodoge.connect(users[0]).withdrawDepositReward(poolId);
+    console.log(colorize.success(`提取24小时奖励: ${ethers.formatEther(reward)} MTK`));
+    
+    // 存入第二个NFT
+    const nftToDeposit2 = [userNFTs[1].nftId];
+    await fomodoge.connect(users[0]).deposit(poolId, nftToDeposit2);
+    console.log(colorize.success(`存入第2个NFT (ID: ${nftToDeposit2})`));
+    
+    // 再次查看池子信息
+    poolInfo = await fomodoge.depositPool(poolId);
+    console.log(colorize.info("第二次存款后池子参数:"));
+    console.log(colorize.info(`- speed: ${poolInfo.speed}`));
+    console.log(colorize.info(`- speedSquare: ${poolInfo.speedSquare}`));
+    
+    // 时间前进到池子结束
+    const endTime = Number(poolInfo.endTime);
+    const currentTime = await ethers.provider.getBlock("latest").then(b => b!.timestamp);
+    await ethers.provider.send("evm_increaseTime", [endTime - currentTime + 60]);
+    await ethers.provider.send("evm_mine", []);
+    
+    // 计算最终奖励
+    const finalReward = await fomodoge.getUsrDepositReward(users[0].address, poolId);
+    console.log(colorize.success(`池子结束时奖励计算: ${ethers.formatEther(finalReward)} MTK`));
+    
+    // 提取最终奖励
+    await fomodoge.connect(users[0]).withdrawDepositReward(poolId);
+    console.log(colorize.success(`提取最终奖励: ${ethers.formatEther(finalReward)} MTK`));
+    
+    // 验证奖励是否合理(应该接近但不会超过总奖励)
+    const totalWithdrawn = reward.add(finalReward);
+    console.log(colorize.info(`总提取奖励: ${ethers.formatEther(totalWithdrawn)} MTK`));
+    console.log(colorize.info(`奖励占总量百分比: ${(Number(ethers.formatEther(totalWithdrawn)) / 10000 * 100).toFixed(2)}%`));
+    expect(totalWithdrawn).to.be.lte(tokenAmount);
+  });
+
+  it("应测试存款方式对奖励的影响", async function () {
+    // 部署模拟ERC20代币
+    const MockERC20 = await ethers.getContractFactory("MockERC20");
+    const mockToken = await MockERC20.deploy("MockToken", "MTK", ethers.parseEther("10000000"));
+    
+    console.log(colorize.info("模拟ERC20代币部署地址:"), mockToken.target);
+    
+    // 设置ERC20代币地址
+    await fomodoge.setErc20Token(mockToken.target);
+    console.log(colorize.info("已在FomoDoge合约中设置ERC20代币地址"));
+    
+    console.log(colorize.info("\n===== 开始存款方式对比测试 =====\n"));
+    
+    // 为用户购买NFT（测试用）- 购买20个
+    const userBuyAmount = 20n;
+    const lockType = 0n; // 无锁定期
+    const dummyAddress = "0x0000000000000000000000000000000000000000";
+    const userBuyPrice = await fomodoge.getBuyPrice(userBuyAmount);
+    
+    await fomodoge.connect(users[0]).buy(userBuyAmount, lockType, dummyAddress, {
+      value: userBuyPrice
+    });
+    console.log(colorize.buyOperation(`用户购买了 ${userBuyAmount} 个NFT用于测试`));
+    
+    // 测试场景1: 一次性大额存款
+    const poolId1 = 10;
+    const tokenAmount = ethers.parseEther("10000"); // 10,000代币作为奖励
+    
+    // 批准合约使用代币
+    await mockToken.approve(fomodoge.target, tokenAmount);
+    
+    // 创建第一个存款池
+    await fomodoge.createDepositPool(poolId1, tokenAmount);
+    console.log(colorize.info(`创建了ID为 ${poolId1} 的存款池，奖励 ${ethers.formatEther(tokenAmount)} 代币`));
+    
+    // 用户1一次性存入10个NFT
+    const user1NFTs = await fomodoge.getUsrNftInfo(users[0].address);
+    const availableNFTs = user1NFTs.filter((nft) => !nft.isDeposit);
+    const nftIdsToDeposit = availableNFTs.slice(0, 10).map((nft) => nft.nftId);
+    
+    await fomodoge.connect(users[0]).deposit(poolId1, nftIdsToDeposit);
+    console.log(colorize.success(`场景1: 用户一次性存入 ${nftIdsToDeposit.length} 个NFT (ID: ${nftIdsToDeposit.join(', ')})`));
+    
+    // 时间前进2天
+    await ethers.provider.send("evm_increaseTime", [2 * 24 * 60 * 60]);
+    await ethers.provider.send("evm_mine", []);
+    console.log(colorize.warning(`\n时间前进了 48 小时`));
+    
+    // 检查第一个场景的奖励
+    const user1Reward1 = await fomodoge.getUsrDepositReward(users[0].address, poolId1);
+    console.log(colorize.info(`场景1 - 48小时后可提取奖励: ${ethers.formatEther(user1Reward1)} MTK`));
+    
+    // 提取第一个场景的奖励
+    await fomodoge.connect(users[0]).withdrawDepositReward(poolId1);
+    console.log(colorize.success(`场景1 - 用户提取了 ${ethers.formatEther(user1Reward1)} MTK 奖励`));
+    
+    // 继续时间前进到池子结束
+    const poolInfo1 = await fomodoge.depositPool(poolId1);
+    const currentTime1 = await ethers.provider.getBlock("latest").then(b => b!.timestamp);
+    const endTime1 = Number(poolInfo1.endTime);
+    const timeToAdvance1 = endTime1 - currentTime1 + 60;
+    
+    await ethers.provider.send("evm_increaseTime", [timeToAdvance1]);
+    await ethers.provider.send("evm_mine", []);
+    console.log(colorize.warning(`\n时间前进至池子结束`));
+    
+    // 检查并提取剩余奖励
+    const user1FinalReward1 = await fomodoge.getUsrDepositReward(users[0].address, poolId1);
+    await fomodoge.connect(users[0]).withdrawDepositReward(poolId1);
+    console.log(colorize.success(`场景1 - 用户池子结束后再次提取了 ${ethers.formatEther(user1FinalReward1)} MTK 奖励`));
+    
+    const user1TotalReward1 = ethers.formatEther(user1Reward1 + user1FinalReward1);
+    console.log(colorize.info(`场景1 - 用户总共提取奖励: ${user1TotalReward1} MTK`));
+    
+    // 测试场景2: 创建存款池-多次小额存款
+    const poolId2 = 11;
+    
+    // 批准合约使用代币
+    await mockToken.approve(fomodoge.target, tokenAmount);
+    
+    // 创建第二个存款池
+    await fomodoge.createDepositPool(poolId2, tokenAmount);
+    console.log(colorize.info(`\n创建了ID为 ${poolId2} 的存款池，奖励 ${ethers.formatEther(tokenAmount)} 代币`));
+    
+    // 用户分5次，每次存入2个NFT
+    const remainingNFTs = (await fomodoge.getUsrNftInfo(users[0].address)).filter((nft) => !nft.isDeposit);
+    
+    for (let i = 0; i < 5; i++) {
+      const nftBatch = remainingNFTs.slice(i*2, (i+1)*2).map((nft) => nft.nftId);
+      await fomodoge.connect(users[0]).deposit(poolId2, nftBatch);
+      console.log(colorize.success(`场景2: 存款批次 ${i+1} - 用户存入 2 个NFT (ID: ${nftBatch.join(', ')})`));
+    }
+    
+    // 时间前进2天（与场景1相同）
+    await ethers.provider.send("evm_increaseTime", [2 * 24 * 60 * 60]);
+    await ethers.provider.send("evm_mine", []);
+    console.log(colorize.warning(`\n时间前进了 48 小时`));
+    
+    // 检查第二个场景的奖励
+    const user1Reward2 = await fomodoge.getUsrDepositReward(users[0].address, poolId2);
+    console.log(colorize.info(`场景2 - 48小时后可提取奖励: ${ethers.formatEther(user1Reward2)} MTK`));
+    
+    // 提取第二个场景的奖励
+    await fomodoge.connect(users[0]).withdrawDepositReward(poolId2);
+    console.log(colorize.success(`场景2 - 用户提取了 ${ethers.formatEther(user1Reward2)} MTK 奖励`));
+    
+    // 继续时间前进到池子结束
+    const poolInfo2 = await fomodoge.depositPool(poolId2);
+    const currentTime2 = await ethers.provider.getBlock("latest").then(b => b!.timestamp);
+    const endTime2 = Number(poolInfo2.endTime);
+    const timeToAdvance2 = endTime2 - currentTime2 + 60;
+    
+    await ethers.provider.send("evm_increaseTime", [timeToAdvance2]);
+    await ethers.provider.send("evm_mine", []);
+    console.log(colorize.warning(`\n时间前进至池子结束`));
+    
+    // 检查并提取剩余奖励
+    const user1FinalReward2 = await fomodoge.getUsrDepositReward(users[0].address, poolId2);
+    await fomodoge.connect(users[0]).withdrawDepositReward(poolId2);
+    console.log(colorize.success(`场景2 - 用户池子结束后再次提取了 ${ethers.formatEther(user1FinalReward2)} MTK 奖励`));
+    
+    const user1TotalReward2 = ethers.formatEther(user1Reward2 + user1FinalReward2);
+    console.log(colorize.info(`场景2 - 用户总共提取奖励: ${user1TotalReward2} MTK`));
+    
+    // 比较两种存款方式的奖励差异
+    console.log(colorize.info("\n===== 两种存款方式奖励对比 ====="));
+    console.log(colorize.info(`场景1 (一次性大额存款): ${user1TotalReward1} MTK`));
+    console.log(colorize.info(`场景2 (多次小额存款): ${user1TotalReward2} MTK`));
+    console.log(colorize.info(`差异百分比: ${(Number(user1TotalReward2) / Number(user1TotalReward1) * 100 - 100).toFixed(2)}%`));
+    
+    // 验证奖励总和是否接近设定的奖励总量
+    const rewardSum = Number(user1TotalReward1) + Number(user1TotalReward2);
+    console.log(colorize.info(`\n两个池子总奖励: ${rewardSum.toFixed(2)} MTK, 占总发行量的 ${(rewardSum / 20000 * 100).toFixed(2)}%`));
   });
 });

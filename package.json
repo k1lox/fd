@@ -4,7 +4,14 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "hardhat test",
+    "test:purchase": "hardhat test test/01-purchase.test.ts",
+    "test:selling": "hardhat test test/02-selling.test.ts",
+    "test:fomo": "hardhat test test/03-fomo-mechanism.test.ts",
+    "test:rewards": "hardhat test test/04-rewards-withdrawal.test.ts",
+    "test:staking": "hardhat test test/05-staking.test.ts",
+    "test:price": "hardhat test test/06-price-calculation.test.ts",
+    "test:integration": "hardhat test test/07-integration.test.ts"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-chai-matchers": "^2.0.8",

@@ -673,11 +673,6 @@
       },
       {
         "internalType": "uint256",
-        "name": "pointsTotalAdv",
-        "type": "uint256"
-      },
-      {
-        "internalType": "uint256",
         "name": "depositUsrAmounts",
         "type": "uint256"
       },
@@ -689,6 +684,16 @@
       {
         "internalType": "uint256",
         "name": "usrLatestDepositTime",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "speed",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "speedSquare",
         "type": "uint256"
       }
     ],
@@ -1219,12 +1224,17 @@
       },
       {
         "internalType": "uint256",
-        "name": "usrLatestDepositTime",
+        "name": "usrLatestDepositSquare",
         "type": "uint256"
       },
       {
         "internalType": "uint256",
         "name": "usrDepositAmounts",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "rewardWithdrawed",
         "type": "uint256"
       }
     ],
